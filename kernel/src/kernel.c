@@ -1,21 +1,46 @@
 
 #include <bootstructs.h>
-
-#define min(a, b) ((a) < (b) ? (a) : (b))
-#define max(a, b) ((a) > (b) ? (a) : (b))
+#include <exceptions.h>
+#include <paging.h>
+#include <screen.h>
+#include <drive.h>
+#include <ahci.h>
+#include <gdt.h>
+#include <idt.h>
+#include <pci.h>
 
 void KernelMain(sBootData sHeader)
 {
-    // Test Pattern from: https://youtu.be/hxOw_p0kLfI?t=42
-    for (int y = 0; y < sHeader.sGOP.nHeight; y++)
-    {
-        for (int x = 0; x < sHeader.sGOP.nWidth; x++)
-        {
-            int l = min(0x1FF >> min(min(min(min(x, y), sHeader.sGOP.nWidth - 1 - x), sHeader.sGOP.nHeight - 1 - y), 31u), 255);
-            int d = 50;
-            ((DWORD *) sHeader.sGOP.pFramebuffer)[x + y * sHeader.sGOP.nWidth] = 65536 * min(max((int) ((~x & ~y) & 0xFF) - d, l), 255) +
-                                                                          256   * min(max((int) (( x & ~y) & 0xFF) - d, l), 255) +
-                                                                                  min(max((int) ((~x &  y) & 0xFF) - d, l), 255);
-        }
-    }
+    DisableInterrupts();
+
+    // Load the GDT
+    InitGDT();
+    WriteGDT();
+
+    // Load the IDT
+    InitIDT();
+    RegisterExceptions();
+
+    // Display
+    InitScreen(sHeader.sGOP.nWidth, sHeader.sGOP.nHeight, sHeader.sGOP.pFramebuffer);
+    SetFGColor(_RGB(255, 255, 255));
+    SetBGColor(_RGB(0, 0, 0));
+    ClearScreen();
+    PrintString("Kernel loaded!\n");
+    
+    // Paging
+    InitPaging(sHeader.pMemoryDescriptor,
+               sHeader.nMemoryMapSize, sHeader.nMemoryDescriptorSize,
+               sHeader.nLoaderStart, sHeader.nLoaderEnd);
+    ReservePages(sHeader.sGOP.pFramebuffer, sHeader.sGOP.nBufferSize / PAGE_SIZE + 1);
+    MapPageRangeToIdentity(sHeader.sGOP.pFramebuffer, sHeader.sGOP.nBufferSize / PAGE_SIZE + 1, PF_WRITEABLE);
+    PrintString("Paging loaded!\n");
+    
+    // Devices
+    PrintString("Loading devices...\n");
+    ScanPCIDevices();
+    InitDrives();
+
+    
+    for (;;);
 }
